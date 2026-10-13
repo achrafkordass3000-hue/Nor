@@ -1,7 +1,8 @@
 package com.example.ui.screens
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.*
+import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -22,21 +23,22 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.R
 import com.example.network.OnlyhavenCreator
 import com.example.network.OnlyhavenMediaItem
@@ -75,7 +77,45 @@ fun CreatorDetailsScreen(
     var selectedPreviewItem by remember { mutableStateOf<OnlyhavenMediaItem?>(null) }
     var initialPreviewIndex by remember { mutableIntStateOf(0) }
 
-    val gridState = rememberLazyGridState()
+    val scrollKey = remember(creator.id, creator.service) { "onlyhaven_creator_${creator.service}_${creator.id}" }
+    val initialScroll = remember(scrollKey) { viewModel.getScrollPosition(scrollKey) }
+
+    val gridState = rememberLazyGridState(
+        initialFirstVisibleItemIndex = initialScroll.first,
+        initialFirstVisibleItemScrollOffset = initialScroll.second
+    )
+
+    LaunchedEffect(gridState, scrollKey) {
+        snapshotFlow { gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset }
+            .collect { (index, offset) ->
+                if (mediaItems.isNotEmpty()) {
+                    viewModel.saveScrollPosition(scrollKey, index, offset)
+                }
+            }
+    }
+
+    var hasRestoredInitialScroll by rememberSaveable(creator.id) { mutableStateOf(false) }
+    LaunchedEffect(mediaItems.isNotEmpty()) {
+        if (mediaItems.isNotEmpty() && !hasRestoredInitialScroll) {
+            val (savedIndex, savedOffset) = viewModel.getScrollPosition(scrollKey)
+            if (savedIndex > 0 || savedOffset > 0) {
+                if (savedIndex < mediaItems.size) {
+                    gridState.scrollToItem(savedIndex, savedOffset)
+                }
+            }
+            hasRestoredInitialScroll = true
+        }
+    }
+
+    var previousTab by rememberSaveable { mutableStateOf(activeTab.name) }
+    LaunchedEffect(activeTab) {
+        if (previousTab != activeTab.name) {
+            previousTab = activeTab.name
+            if (mediaItems.isNotEmpty()) {
+                gridState.scrollToItem(0)
+            }
+        }
+    }
 
     fun loadMedia(page: Int, append: Boolean = false) {
         coroutineScope.launch {
@@ -154,274 +194,292 @@ fun CreatorDetailsScreen(
         }
     }
 
-    Scaffold(
-        containerColor = palette.bg,
-        contentWindowInsets = WindowInsets.statusBars,
-        topBar = {
-            com.example.ui.components.AppTophead(
-                title = "Creator Details",
-                navIconType = com.example.ui.components.NavIconType.BACK,
-                onNavClick = { viewModel.navigateBack() },
-                showBorder = false
-            )
-        }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-        ) {
-            // 1. Creator Profile Header Info
-            Surface(
-                color = palette.bg,
-                shadowElevation = 0.dp,
-                modifier = Modifier.fillMaxWidth()
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            containerColor = palette.bg,
+            contentWindowInsets = WindowInsets.statusBars,
+            topBar = {
+                com.example.ui.components.AppTophead(
+                    title = "Creator Details",
+                    navIconType = com.example.ui.components.NavIconType.BACK,
+                    onNavClick = { viewModel.navigateBack() },
+                    showBorder = false
+                )
+            }
+        ) { padding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
             ) {
-                Column(
+                // 1. Creator Profile Header Info
+                Surface(
+                    color = palette.bg,
+                    shadowElevation = 0.dp,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 16.dp, bottom = 14.dp, start = 16.dp, end = 16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        // Circular Avatar
-                        if (creator.avatarUrl.isNotEmpty()) {
-                            AsyncImage(
-                                model = creator.avatarUrl,
-                                contentDescription = creator.name,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .size(96.dp)
-                                    .clip(CircleShape)
-                                    .border(2.5.dp, accent, CircleShape)
-                                    .background(palette.border)
-                            )
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .size(96.dp)
-                                    .clip(CircleShape)
-                                    .background(accent.copy(alpha = 0.2f))
-                                    .border(2.5.dp, accent, CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = creator.name.take(2).uppercase(),
-                                    color = accent,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 24.sp
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 16.dp, bottom = 14.dp, start = 16.dp, end = 16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            // Circular Avatar
+                            if (creator.avatarUrl.isNotEmpty()) {
+                                val context = LocalContext.current
+                                val avatarRequest = remember(creator.avatarUrl) {
+                                    ImageRequest.Builder(context)
+                                        .data(creator.avatarUrl)
+                                        .crossfade(true)
+                                        .crossfade(350)
+                                        .build()
+                                }
+                                AsyncImage(
+                                    model = avatarRequest,
+                                    contentDescription = creator.name,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(96.dp)
+                                        .clip(CircleShape)
+                                        .border(2.5.dp, accent, CircleShape)
+                                        .background(palette.border)
                                 )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(96.dp)
+                                        .clip(CircleShape)
+                                        .background(accent.copy(alpha = 0.2f))
+                                        .border(2.5.dp, accent, CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = creator.name.take(2).uppercase(),
+                                        color = accent,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 24.sp
+                                    )
+                                }
                             }
-                        }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
 
-                        val displayTitle = creator.displayName.ifBlank { creator.name }
-                        Text(
-                            text = displayTitle,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 20.sp,
-                            color = palette.textPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-
-                        if (creator.displayName.isNotBlank() && !creator.displayName.equals(creator.name, ignoreCase = true)) {
-                            Spacer(modifier = Modifier.height(2.dp))
+                            val displayTitle = creator.displayName.ifBlank { creator.name }
                             Text(
-                                text = "@${creator.name}",
-                                fontSize = 14.sp,
-                                color = palette.textSecondary,
+                                text = displayTitle,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 20.sp,
+                                color = palette.textPrimary,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                        }
-                    }
 
-                    // 2. Tab Selector Row (ALL, Images, Videos)
-                    val indicatorBias by animateFloatAsState(
-                        targetValue = when (activeTab) {
-                            CreatorMediaTab.ALL -> -1f
-                            CreatorMediaTab.IMAGES -> 0f
-                            CreatorMediaTab.VIDEOS -> 1f
-                        },
-                        animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing),
-                        label = "creator_tab_indicator_bias"
-                    )
-
-                    val allTabColor by animateColorAsState(
-                        targetValue = if (activeTab == CreatorMediaTab.ALL) accent else palette.textSecondary,
-                        animationSpec = tween(durationMillis = 180),
-                        label = "all_tab_color"
-                    )
-                    val imagesTabColor by animateColorAsState(
-                        targetValue = if (activeTab == CreatorMediaTab.IMAGES) accent else palette.textSecondary,
-                        animationSpec = tween(durationMillis = 180),
-                        label = "images_tab_color"
-                    )
-                    val videosTabColor by animateColorAsState(
-                        targetValue = if (activeTab == CreatorMediaTab.VIDEOS) accent else palette.textSecondary,
-                        animationSpec = tween(durationMillis = 180),
-                        label = "videos_tab_color"
-                    )
-
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp)
-                        ) {
-                            Row(modifier = Modifier.fillMaxSize()) {
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .fillMaxHeight()
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null,
-                                            onClick = { activeTab = CreatorMediaTab.ALL }
-                                        ),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = "ALL",
-                                        fontWeight = if (activeTab == CreatorMediaTab.ALL) FontWeight.Bold else FontWeight.SemiBold,
-                                        color = allTabColor,
-                                        fontSize = 14.sp
-                                    )
-                                }
-
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .fillMaxHeight()
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null,
-                                            onClick = { activeTab = CreatorMediaTab.IMAGES }
-                                        ),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = "Images",
-                                        fontWeight = if (activeTab == CreatorMediaTab.IMAGES) FontWeight.Bold else FontWeight.SemiBold,
-                                        color = imagesTabColor,
-                                        fontSize = 14.sp
-                                    )
-                                }
-
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .fillMaxHeight()
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null,
-                                            onClick = { activeTab = CreatorMediaTab.VIDEOS }
-                                        ),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = "Videos",
-                                        fontWeight = if (activeTab == CreatorMediaTab.VIDEOS) FontWeight.Bold else FontWeight.SemiBold,
-                                        color = videosTabColor,
-                                        fontSize = 14.sp
-                                    )
-                                }
-                            }
-
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(3.dp)
-                                    .align(Alignment.BottomCenter)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth(1f / 3f)
-                                        .fillMaxHeight()
-                                        .align(BiasAlignment(indicatorBias, 0f))
-                                        .background(accent)
+                            if (creator.displayName.isNotBlank() && !creator.displayName.equals(creator.name, ignoreCase = true)) {
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "@${creator.name}",
+                                    fontSize = 14.sp,
+                                    color = palette.textSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
-                        HorizontalDivider(color = palette.border)
-                    }
-                }
-            }
 
-            // 3. Instagram-Style 4:5 Vertical Portrait Grid
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .weight(1f)
-            ) {
-                if (isLoading && mediaItems.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = accent)
-                    }
-                } else if (errorMessage != null && mediaItems.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(24.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = errorMessage ?: "Failed to load media",
-                                color = palette.textSecondary,
-                                fontSize = 15.sp
-                            )
-                            Spacer(modifier = Modifier.height(14.dp))
-                            Button(
-                                onClick = { loadMedia(1) },
-                                colors = ButtonDefaults.buttonColors(containerColor = accent)
-                            ) {
-                                Text("Retry", color = Color.White)
-                            }
-                        }
-                    }
-                } else if (displayedItems.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(
-                            text = "No ${activeTab.name.lowercase()} found",
-                            color = palette.textSecondary,
-                            fontSize = 15.sp
+                        // 2. Tab Selector Row (ALL, Images, Videos)
+                        val indicatorBias by animateFloatAsState(
+                            targetValue = when (activeTab) {
+                                CreatorMediaTab.ALL -> -1f
+                                CreatorMediaTab.IMAGES -> 0f
+                                CreatorMediaTab.VIDEOS -> 1f
+                            },
+                            animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing),
+                            label = "creator_tab_indicator_bias"
                         )
-                    }
-                } else {
-                    LazyVerticalGrid(
-                        state = gridState,
-                        columns = GridCells.Fixed(3),
-                        contentPadding = PaddingValues(
-                            start = 2.dp,
-                            end = 2.dp,
-                            bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 8.dp,
-                            top = 0.dp
-                        ),
-                        horizontalArrangement = Arrangement.spacedBy(2.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        items(
-                            items = displayedItems,
-                            key = { item -> "${item.postId}_${item.sha256}" }
-                        ) { item ->
-                            val targetAttachment = if (activeTab == CreatorMediaTab.VIDEOS) {
-                                item.postAttachments.firstOrNull { it.kind == "video" } ?: item
-                            } else {
-                                item.postAttachments.firstOrNull() ?: item
-                            }
 
+                        val allTabColor by animateColorAsState(
+                            targetValue = if (activeTab == CreatorMediaTab.ALL) accent else palette.textSecondary,
+                            animationSpec = tween(durationMillis = 180),
+                            label = "all_tab_color"
+                        )
+                        val imagesTabColor by animateColorAsState(
+                            targetValue = if (activeTab == CreatorMediaTab.IMAGES) accent else palette.textSecondary,
+                            animationSpec = tween(durationMillis = 180),
+                            label = "images_tab_color"
+                        )
+                        val videosTabColor by animateColorAsState(
+                            targetValue = if (activeTab == CreatorMediaTab.VIDEOS) accent else palette.textSecondary,
+                            animationSpec = tween(durationMillis = 180),
+                            label = "videos_tab_color"
+                        )
+
+                        Column(modifier = Modifier.fillMaxWidth()) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .aspectRatio(4f / 5f)
-                                    .background(palette.cardBg)
-                                    .clip(RoundedCornerShape(3.dp))
+                                    .height(48.dp)
+                            ) {
+                                Row(modifier = Modifier.fillMaxSize()) {
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight()
+                                            .clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null,
+                                                onClick = { activeTab = CreatorMediaTab.ALL }
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "ALL",
+                                            fontWeight = if (activeTab == CreatorMediaTab.ALL) FontWeight.Bold else FontWeight.SemiBold,
+                                            color = allTabColor,
+                                            fontSize = 14.sp
+                                        )
+                                    }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight()
+                                            .clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null,
+                                                onClick = { activeTab = CreatorMediaTab.IMAGES }
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "Images",
+                                            fontWeight = if (activeTab == CreatorMediaTab.IMAGES) FontWeight.Bold else FontWeight.SemiBold,
+                                            color = imagesTabColor,
+                                            fontSize = 14.sp
+                                        )
+                                    }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight()
+                                            .clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null,
+                                                onClick = { activeTab = CreatorMediaTab.VIDEOS }
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "Videos",
+                                            fontWeight = if (activeTab == CreatorMediaTab.VIDEOS) FontWeight.Bold else FontWeight.SemiBold,
+                                            color = videosTabColor,
+                                            fontSize = 14.sp
+                                        )
+                                    }
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(3.dp)
+                                        .align(Alignment.BottomCenter)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(1f / 3f)
+                                            .fillMaxHeight()
+                                            .align(BiasAlignment(indicatorBias, 0f))
+                                            .background(accent)
+                                    )
+                                }
+                            }
+                            HorizontalDivider(color = palette.border)
+                        }
+                    }
+                }
+
+                // 3. Instagram-Style 4:5 Vertical Portrait Grid
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .weight(1f)
+                ) {
+                    if (isLoading && mediaItems.isEmpty()) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(color = accent)
+                        }
+                    } else if (errorMessage != null && mediaItems.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(24.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = errorMessage ?: "Failed to load media",
+                                    color = palette.textSecondary,
+                                    fontSize = 15.sp
+                                )
+                                Spacer(modifier = Modifier.height(14.dp))
+                                Button(
+                                    onClick = { loadMedia(1) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = accent)
+                                ) {
+                                    Text("Retry", color = Color.White)
+                                }
+                            }
+                        }
+                    } else if (displayedItems.isEmpty()) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "No ${activeTab.name.lowercase()} found",
+                                color = palette.textSecondary,
+                                fontSize = 15.sp
+                            )
+                        }
+                    } else {
+                        LazyVerticalGrid(
+                            state = gridState,
+                            columns = GridCells.Fixed(3),
+                            contentPadding = PaddingValues(
+                                start = 2.dp,
+                                end = 2.dp,
+                                bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 8.dp,
+                                top = 0.dp
+                            ),
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            items(
+                                items = displayedItems,
+                                key = { item -> "${item.postId}_${item.sha256}" }
+                            ) { item ->
+                                val targetAttachment = if (activeTab == CreatorMediaTab.VIDEOS) {
+                                    item.postAttachments.firstOrNull { it.kind == "video" } ?: item
+                                } else {
+                                    item.postAttachments.firstOrNull() ?: item
+                                }
+                                val context = LocalContext.current
+                                val thumbRequest = remember(targetAttachment.thumbnailUrl) {
+                                    ImageRequest.Builder(context)
+                                        .data(targetAttachment.thumbnailUrl)
+                                        .crossfade(true)
+                                        .crossfade(350)
+                                        .build()
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .animateItem()
+                                        .fillMaxWidth()
+                                        .aspectRatio(4f / 5f)
+                                        .background(palette.cardBg)
+                                        .clip(RoundedCornerShape(3.dp))
                                     .clickable {
                                         initialPreviewIndex = if (activeTab == CreatorMediaTab.VIDEOS) {
                                             val idx = item.postAttachments.indexOfFirst { it.kind == "video" }
@@ -431,7 +489,7 @@ fun CreatorDetailsScreen(
                                     }
                             ) {
                                 AsyncImage(
-                                    model = targetAttachment.thumbnailUrl,
+                                    model = thumbRequest,
                                     contentDescription = null,
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize()
@@ -482,27 +540,25 @@ fun CreatorDetailsScreen(
         }
     }
 
-    // 4. Preview Modal Dialog
-    selectedPreviewItem?.let { previewItem ->
-        val postAttachments = remember(previewItem) {
-            previewItem.postAttachments.ifEmpty { listOf(previewItem) }
-        }
-        val safeInitialPage = initialPreviewIndex.coerceIn(0, (postAttachments.size - 1).coerceAtLeast(0))
-        val pagerState = rememberPagerState(
-            initialPage = safeInitialPage,
-            pageCount = { postAttachments.size }
-        )
-
-        val zoomedPagesState = remember { mutableStateMapOf<Int, Boolean>() }
-        val isCurrentPageZoomed = zoomedPagesState[pagerState.currentPage] == true
-
-        Dialog(
-            onDismissRequest = { selectedPreviewItem = null },
-            properties = DialogProperties(
-                usePlatformDefaultWidth = false,
-                decorFitsSystemWindows = false
+    // 4. Full-Screen Edge-to-Edge Immersive Preview Overlay (Pure AMOLED Black, Zero System Scrim)
+    AnimatedVisibility(
+        visible = selectedPreviewItem != null,
+        enter = fadeIn(animationSpec = tween(220, easing = FastOutSlowInEasing)),
+        exit = fadeOut(animationSpec = tween(180, easing = FastOutLinearInEasing))
+    ) {
+        selectedPreviewItem?.let { previewItem ->
+            val postAttachments = remember(previewItem) {
+                previewItem.postAttachments.ifEmpty { listOf(previewItem) }
+            }
+            val safeInitialPage = initialPreviewIndex.coerceIn(0, (postAttachments.size - 1).coerceAtLeast(0))
+            val pagerState = rememberPagerState(
+                initialPage = safeInitialPage,
+                pageCount = { postAttachments.size }
             )
-        ) {
+
+            val zoomedPagesState = remember { mutableStateMapOf<Int, Boolean>() }
+            val isCurrentPageZoomed = zoomedPagesState[pagerState.currentPage] == true
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -532,6 +588,20 @@ fun CreatorDetailsScreen(
                                 resetKey = page,
                                 onZoomChanged = { zoomed ->
                                     zoomedPagesState[page] = zoomed
+                                },
+                                onNavigateNext = {
+                                    if (pagerState.currentPage < postAttachments.size - 1) {
+                                        coroutineScope.launch {
+                                            pagerState.animateScrollToPage(pagerState.currentPage + 1)
+                                        }
+                                    }
+                                },
+                                onNavigatePrevious = {
+                                    if (pagerState.currentPage > 0) {
+                                        coroutineScope.launch {
+                                            pagerState.animateScrollToPage(pagerState.currentPage - 1)
+                                        }
+                                    }
                                 },
                                 modifier = Modifier.fillMaxSize()
                             )
@@ -585,4 +655,5 @@ fun CreatorDetailsScreen(
             }
         }
     }
+}
 }

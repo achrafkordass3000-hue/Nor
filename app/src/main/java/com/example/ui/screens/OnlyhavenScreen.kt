@@ -12,11 +12,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -25,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.R
 import com.example.network.OnlyhavenCreator
 import com.example.ui.MainViewModel
@@ -48,7 +51,49 @@ fun OnlyhavenScreen(
     val currentPage by viewModel.onlyhavenCurrentPage.collectAsStateWithLifecycle()
     val errorMessage by viewModel.onlyhavenErrorMessage.collectAsStateWithLifecycle()
 
-    val gridState = rememberLazyGridState()
+    val scrollKey = "onlyhaven_creators"
+    val initialScroll = remember(scrollKey) { viewModel.getScrollPosition(scrollKey) }
+
+    val gridState = rememberLazyGridState(
+        initialFirstVisibleItemIndex = initialScroll.first,
+        initialFirstVisibleItemScrollOffset = initialScroll.second
+    )
+
+    // Continuously save scroll position into ViewModel registry
+    LaunchedEffect(gridState, scrollKey) {
+        snapshotFlow { gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset }
+            .collect { (index, offset) ->
+                if (creators.isNotEmpty()) {
+                    viewModel.saveScrollPosition(scrollKey, index, offset)
+                }
+            }
+    }
+
+    // Restore scroll position if creators were loaded asynchronously
+    var hasRestoredInitialScroll by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(creators.isNotEmpty()) {
+        if (creators.isNotEmpty() && !hasRestoredInitialScroll) {
+            val (savedIndex, savedOffset) = viewModel.getScrollPosition(scrollKey)
+            if (savedIndex > 0 || savedOffset > 0) {
+                if (savedIndex < creators.size) {
+                    gridState.scrollToItem(savedIndex, savedOffset)
+                }
+            }
+            hasRestoredInitialScroll = true
+        }
+    }
+
+    // Reset scroll position to top when search query changes
+    var previousQuery by rememberSaveable { mutableStateOf(searchQuery) }
+    LaunchedEffect(searchQuery) {
+        if (previousQuery != searchQuery) {
+            previousQuery = searchQuery
+            viewModel.saveScrollPosition(scrollKey, 0, 0)
+            if (creators.isNotEmpty()) {
+                gridState.scrollToItem(0)
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         if (creators.isEmpty() && !isLoading) {
@@ -157,8 +202,17 @@ fun OnlyhavenScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(creators, key = { "${it.service}_${it.id}" }) { creator ->
+                        val context = LocalContext.current
+                        val avatarRequest = remember(creator.avatarUrl) {
+                            ImageRequest.Builder(context)
+                                .data(creator.avatarUrl)
+                                .crossfade(true)
+                                .crossfade(350)
+                                .build()
+                        }
                         Card(
                             modifier = Modifier
+                                .animateItem()
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(14.dp))
                                 .clickable {
@@ -184,7 +238,7 @@ fun OnlyhavenScreen(
                                 ) {
                                     if (creator.avatarUrl.isNotEmpty()) {
                                         AsyncImage(
-                                            model = creator.avatarUrl,
+                                            model = avatarRequest,
                                             contentDescription = creator.name,
                                             contentScale = ContentScale.Crop,
                                             modifier = Modifier.fillMaxSize()
