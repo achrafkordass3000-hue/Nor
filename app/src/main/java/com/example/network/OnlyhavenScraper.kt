@@ -36,6 +36,16 @@ data class OnlyhavenMediaItem(
     val totalAttachmentsCount: Int get() = if (postAttachments.isNotEmpty()) postAttachments.size else 1
 }
 
+enum class OnlyhavenSortMode(val apiValue: String, val displayName: String) {
+    POPULARITY("bookmarked", "Popularity"),
+    DATE_INDEXED("indexed", "Date indexed"),
+    DATE_UPDATED("updated", "Date updated"),
+    ALPHABETICAL("name", "Alphabetical"),
+    BY_SERVICE("service", "By service"),
+    DM_COUNT("dm_count", "DM count"),
+    POST_COUNT("post_count", "Post count")
+}
+
 object OnlyhavenScraper {
     private const val TAG = "OnlyhavenScraper"
     private const val API_BASE = "https://cum.st/api/v1/creators"
@@ -44,7 +54,11 @@ object OnlyhavenScraper {
     private const val IMG_BASE = "https://img.cum.st"
     private const val MEDIA_BASE = "https://e1.cum.st/media"
 
-    suspend fun getCreators(page: Int = 1, query: String = ""): List<OnlyhavenCreator> {
+    suspend fun getCreators(
+        page: Int = 1,
+        query: String = "",
+        sort: String = "bookmarked"
+    ): List<OnlyhavenCreator> {
         val creators = mutableListOf<OnlyhavenCreator>()
         val cleanQuery = query.trim()
         val limit = 50
@@ -54,6 +68,9 @@ object OnlyhavenScraper {
             val urlBuilder = StringBuilder(API_BASE)
             urlBuilder.append("?o=").append(offset)
             urlBuilder.append("&n=").append(limit)
+            if (sort.isNotBlank()) {
+                urlBuilder.append("&sort=").append(URLEncoder.encode(sort, "UTF-8"))
+            }
             if (cleanQuery.isNotEmpty()) {
                 urlBuilder.append("&q=").append(URLEncoder.encode(cleanQuery, "UTF-8"))
             }

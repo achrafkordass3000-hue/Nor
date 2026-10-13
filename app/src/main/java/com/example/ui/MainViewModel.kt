@@ -1801,7 +1801,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _onlyhavenErrorMessage = MutableStateFlow<String?>(null)
     val onlyhavenErrorMessage: StateFlow<String?> = _onlyhavenErrorMessage.asStateFlow()
 
+    private val _onlyhavenSortMode = MutableStateFlow(OnlyhavenSortMode.POPULARITY)
+    val onlyhavenSortMode: StateFlow<OnlyhavenSortMode> = _onlyhavenSortMode.asStateFlow()
+
     private var onlyhavenSearchJob: Job? = null
+
+    fun setOnlyhavenSortMode(sortMode: OnlyhavenSortMode) {
+        if (_onlyhavenSortMode.value != sortMode) {
+            _onlyhavenSortMode.value = sortMode
+            _onlyhavenCreators.value = emptyList()
+            loadOnlyhavenCreators(
+                query = _onlyhavenSearchQuery.value,
+                sort = sortMode.apiValue,
+                page = 1,
+                append = false
+            )
+        }
+    }
 
     fun setOnlyhavenSearchQuery(query: String) {
         _onlyhavenSearchQuery.value = query
@@ -1810,6 +1826,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadOnlyhavenCreators(
         query: String = _onlyhavenSearchQuery.value,
+        sort: String = _onlyhavenSortMode.value.apiValue,
         page: Int = 1,
         append: Boolean = false,
         isUserTyping: Boolean = false
@@ -1829,7 +1846,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             try {
-                val results = OnlyhavenScraper.getCreators(page = page, query = query)
+                val results = OnlyhavenScraper.getCreators(page = page, query = query, sort = sort)
                 if (append) {
                     val existingIds = _onlyhavenCreators.value.map { it.id }.toSet()
                     val newUnique = results.filter { it.id !in existingIds }
