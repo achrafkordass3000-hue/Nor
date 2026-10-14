@@ -193,11 +193,9 @@ fun Miniplayer(
 
         // Buffering loader
         if (isBuffering && errorMessage == null) {
-            CircularProgressIndicator(
-                color = accent,
-                strokeWidth = 3.dp,
+            AppLottieLoadingAnimation(
                 modifier = Modifier
-                    .size(48.dp)
+                    .size(56.dp)
                     .align(Alignment.Center)
             )
         }

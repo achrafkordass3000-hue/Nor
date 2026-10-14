@@ -487,6 +487,9 @@ fun MainAppShell(viewModel: MainViewModel) {
                                     viewModel = viewModel,
                                     creator = screen.creator
                                 )
+                                is ScreenState.OnlyhavenSavedCreators -> SavedCreatorsScreen(
+                                    viewModel = viewModel
+                                )
                                  is ScreenState.Settings -> SettingsScreen(viewModel)
                             }
                         }
@@ -506,7 +509,8 @@ fun MainAppShell(viewModel: MainViewModel) {
                             currentScreen !is ScreenState.AddEditLink &&
                             currentScreen !is ScreenState.AddEditActor &&
                             currentScreen !is ScreenState.AddEditStudio &&
-                            currentScreen !is ScreenState.OnlyhavenCreatorDetails
+                            currentScreen !is ScreenState.OnlyhavenCreatorDetails &&
+                            currentScreen !is ScreenState.OnlyhavenSavedCreators
 
                         AnimatedVisibility(
                             visible = shouldShowBottomBar,

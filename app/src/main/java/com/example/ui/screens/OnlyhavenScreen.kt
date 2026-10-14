@@ -1,14 +1,21 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.*
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.ui.draw.scale
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import com.example.network.OnlyhavenSortMode
+import com.example.ui.components.AppLottieLoadingAnimation
+import com.example.ui.components.ShimmerBrush
 import com.example.ui.components.vaultTopGlow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -58,6 +65,7 @@ fun OnlyhavenScreen(
     val canLoadMore by viewModel.onlyhavenCanLoadMore.collectAsStateWithLifecycle()
     val currentPage by viewModel.onlyhavenCurrentPage.collectAsStateWithLifecycle()
     val errorMessage by viewModel.onlyhavenErrorMessage.collectAsStateWithLifecycle()
+    val savedCreatorKeys by viewModel.savedCreatorKeys.collectAsStateWithLifecycle()
 
     var showSortMenu by remember { mutableStateOf(false) }
 
@@ -168,6 +176,19 @@ fun OnlyhavenScreen(
                 showBorder = false,
                 actions = {
                     if (!isSearchExpanded) {
+                        // Saved Creator Action
+                        IconButton(
+                            onClick = { viewModel.navigateTo(com.example.ui.ScreenState.OnlyhavenSavedCreators) },
+                            modifier = Modifier.testTag("saved_creators_head_button")
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_heart_filled),
+                                contentDescription = "Saved Creator",
+                                tint = palette.textPrimary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+
                         // Sort Action with Dropdown Menu
                         Box {
                             IconButton(
@@ -265,7 +286,7 @@ fun OnlyhavenScreen(
         ) {
             if (isLoading && creators.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = accent)
+                    AppLottieLoadingAnimation(modifier = Modifier.size(64.dp))
                 }
             } else if (errorMessage != null && creators.isEmpty()) {
                 Box(
@@ -307,12 +328,18 @@ fun OnlyhavenScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(creators, key = { "row_${it.service}_${it.id}" }) { creator ->
+                        val isSaved = savedCreatorKeys.contains("${creator.service}_${creator.id}")
+
                         OnlyhavenRowCard(
                             creator = creator,
                             palette = palette,
                             accent = accent,
                             isLight = isLight,
                             circleBorderColor = circleBorderColor,
+                            isSaved = isSaved,
+                            onToggleSave = {
+                                viewModel.toggleSaveOnlyhavenCreator(creator)
+                            },
                             onClick = {
                                 viewModel.navigateTo(com.example.ui.ScreenState.OnlyhavenCreatorDetails(creator))
                             }
@@ -321,7 +348,7 @@ fun OnlyhavenScreen(
 
                     if (isLoadingMore) {
                         item {
-                            LoadingMoreIndicator(accent = accent)
+                            LoadingMoreIndicator()
                         }
                     }
                 }
@@ -337,6 +364,8 @@ private fun LazyGridItemScope.OnlyhavenRowCard(
     accent: Color,
     isLight: Boolean,
     circleBorderColor: Color,
+    isSaved: Boolean,
+    onToggleSave: () -> Unit,
     onClick: () -> Unit
 ) {
     val context = LocalContext.current
@@ -347,6 +376,17 @@ private fun LazyGridItemScope.OnlyhavenRowCard(
             .crossfade(350)
             .build()
     }
+
+    var isPopAnimating by remember { mutableStateOf(false) }
+    val heartScale by animateFloatAsState(
+        targetValue = if (isPopAnimating) 1.35f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "heart_pop",
+        finishedListener = { isPopAnimating = false }
+    )
 
     Card(
         modifier = Modifier
@@ -375,10 +415,21 @@ private fun LazyGridItemScope.OnlyhavenRowCard(
                 contentAlignment = Alignment.Center
             ) {
                 if (creator.avatarUrl.isNotEmpty()) {
+                    var isAvatarLoaded by remember(creator.avatarUrl) { mutableStateOf(false) }
+                    if (!isAvatarLoaded) {
+                        val shimmerBrush = ShimmerBrush(targetValue = 900f)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(palette.surface)
+                                .background(shimmerBrush)
+                        )
+                    }
                     AsyncImage(
                         model = avatarRequest,
                         contentDescription = creator.name,
                         contentScale = ContentScale.Crop,
+                        onSuccess = { isAvatarLoaded = true },
                         modifier = Modifier.fillMaxSize()
                     )
                 } else {
@@ -448,18 +499,45 @@ private fun LazyGridItemScope.OnlyhavenRowCard(
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            // 3. Heart Save / Unsave Button on the Right (No circle ripple effect)
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .scale(heartScale)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        isPopAnimating = true
+                        onToggleSave()
+                    }
+                    .testTag("save_creator_${creator.id}"),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(
+                        id = if (isSaved) R.drawable.ic_heart_filled else R.drawable.ic_heart_outline
+                    ),
+                    contentDescription = if (isSaved) "Unsave Creator" else "Save Creator",
+                    tint = if (isSaved) Color(0xFFFF3B5C) else palette.textSecondary,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun LoadingMoreIndicator(accent: Color) {
+private fun LoadingMoreIndicator() {
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(16.dp),
         contentAlignment = Alignment.Center
     ) {
-        CircularProgressIndicator(color = accent, modifier = Modifier.size(32.dp))
+        AppLottieLoadingAnimation(modifier = Modifier.size(36.dp))
     }
 }

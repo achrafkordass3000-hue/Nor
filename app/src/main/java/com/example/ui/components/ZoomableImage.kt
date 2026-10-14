@@ -21,8 +21,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import kotlinx.coroutines.launch
 
 /**
@@ -63,6 +67,22 @@ fun ZoomableImage(
     val isZoomed = scaleAnim.value > 1.05f
     LaunchedEffect(isZoomed) {
         onZoomChanged?.invoke(isZoomed)
+    }
+
+    val context = LocalContext.current
+    var isImageLoaded by remember(model) { mutableStateOf(false) }
+    var isImageError by remember(model) { mutableStateOf(false) }
+
+    val imageRequest = remember(model) {
+        if (model is ImageRequest) {
+            model
+        } else {
+            ImageRequest.Builder(context)
+                .data(model)
+                .crossfade(true)
+                .crossfade(260)
+                .build()
+        }
     }
 
     Box(
@@ -328,10 +348,26 @@ fun ZoomableImage(
             },
         contentAlignment = Alignment.Center
     ) {
+        if (!isImageLoaded && !isImageError) {
+            AppLottieLoadingAnimation(
+                modifier = Modifier
+                    .size(64.dp)
+                    .align(Alignment.Center)
+            )
+        }
+
         AsyncImage(
-            model = model,
+            model = imageRequest,
             contentDescription = contentDescription,
             contentScale = ContentScale.Fit,
+            onSuccess = {
+                isImageLoaded = true
+                isImageError = false
+            },
+            onError = {
+                isImageLoaded = true
+                isImageError = true
+            },
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {

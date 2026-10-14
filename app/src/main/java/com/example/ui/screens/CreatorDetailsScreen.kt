@@ -4,8 +4,12 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.ui.draw.scale
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -44,7 +48,9 @@ import com.example.network.OnlyhavenCreator
 import com.example.network.OnlyhavenMediaItem
 import com.example.network.OnlyhavenScraper
 import com.example.ui.MainViewModel
+import com.example.ui.components.AppLottieLoadingAnimation
 import com.example.ui.components.Miniplayer
+import com.example.ui.components.ShimmerBrush
 import com.example.ui.components.ZoomableImage
 import com.example.ui.theme.LocalAccentColor
 import com.example.ui.theme.LocalVaultPalette
@@ -72,6 +78,8 @@ fun CreatorDetailsScreen(
     var isLoadingMore by remember { mutableStateOf(false) }
     var currentPage by remember { mutableStateOf(1) }
     var canLoadMore by remember { mutableStateOf(true) }
+    val savedKeys by viewModel.savedCreatorKeys.collectAsStateWithLifecycle()
+    val isSaved = savedKeys.contains("${creator.service}_${creator.id}")
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
     var selectedPreviewItem by remember { mutableStateOf<OnlyhavenMediaItem?>(null) }
@@ -203,7 +211,38 @@ fun CreatorDetailsScreen(
                     title = "Creator Details",
                     navIconType = com.example.ui.components.NavIconType.BACK,
                     onNavClick = { viewModel.navigateBack() },
-                    showBorder = false
+                    showBorder = false,
+                    actions = {
+                        var isPopAnimating by remember { mutableStateOf(false) }
+                        val heartScale by animateFloatAsState(
+                            targetValue = if (isPopAnimating) 1.35f else 1f,
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                stiffness = Spring.StiffnessMedium
+                            ),
+                            label = "heart_pop",
+                            finishedListener = { isPopAnimating = false }
+                        )
+
+                        IconButton(
+                            onClick = {
+                                isPopAnimating = true
+                                viewModel.toggleSaveOnlyhavenCreator(creator)
+                            },
+                            modifier = Modifier
+                                .scale(heartScale)
+                                .testTag("save_creator_details_button")
+                        ) {
+                            Icon(
+                                painter = painterResource(
+                                    id = if (isSaved) R.drawable.ic_heart_filled else R.drawable.ic_heart_outline
+                                ),
+                                contentDescription = if (isSaved) "Unsave Creator" else "Save Creator",
+                                tint = if (isSaved) Color(0xFFFF3B5C) else palette.textPrimary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
                 )
             }
         ) { padding ->
@@ -237,16 +276,32 @@ fun CreatorDetailsScreen(
                                         .crossfade(350)
                                         .build()
                                 }
-                                AsyncImage(
-                                    model = avatarRequest,
-                                    contentDescription = creator.name,
-                                    contentScale = ContentScale.Crop,
+                                var isAvatarLoaded by remember(creator.avatarUrl) { mutableStateOf(false) }
+                                Box(
                                     modifier = Modifier
                                         .size(96.dp)
                                         .clip(CircleShape)
                                         .border(2.5.dp, accent, CircleShape)
-                                        .background(palette.border)
-                                )
+                                        .background(palette.border),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (!isAvatarLoaded) {
+                                        val shimmerBrush = ShimmerBrush(targetValue = 900f)
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .background(palette.cardBg)
+                                                .background(shimmerBrush)
+                                        )
+                                    }
+                                    AsyncImage(
+                                        model = avatarRequest,
+                                        contentDescription = creator.name,
+                                        contentScale = ContentScale.Crop,
+                                        onSuccess = { isAvatarLoaded = true },
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
                             } else {
                                 Box(
                                     modifier = Modifier
@@ -409,7 +464,7 @@ fun CreatorDetailsScreen(
                 ) {
                     if (isLoading && mediaItems.isEmpty()) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(color = accent)
+                            AppLottieLoadingAnimation(modifier = Modifier.size(64.dp))
                         }
                     } else if (errorMessage != null && mediaItems.isEmpty()) {
                         Box(
@@ -472,6 +527,8 @@ fun CreatorDetailsScreen(
                                         .crossfade(350)
                                         .build()
                                 }
+                                var isThumbLoaded by remember(targetAttachment.thumbnailUrl) { mutableStateOf(false) }
+                                var isThumbError by remember(targetAttachment.thumbnailUrl) { mutableStateOf(false) }
 
                                 Box(
                                     modifier = Modifier
@@ -480,57 +537,73 @@ fun CreatorDetailsScreen(
                                         .aspectRatio(4f / 5f)
                                         .background(palette.cardBg)
                                         .clip(RoundedCornerShape(3.dp))
-                                    .clickable {
-                                        initialPreviewIndex = if (activeTab == CreatorMediaTab.VIDEOS) {
-                                            val idx = item.postAttachments.indexOfFirst { it.kind == "video" }
-                                            if (idx >= 0) idx else 0
-                                        } else 0
-                                        selectedPreviewItem = item
+                                        .clickable {
+                                            initialPreviewIndex = if (activeTab == CreatorMediaTab.VIDEOS) {
+                                                val idx = item.postAttachments.indexOfFirst { it.kind == "video" }
+                                                if (idx >= 0) idx else 0
+                                            } else 0
+                                            selectedPreviewItem = item
+                                        }
+                                ) {
+                                    if (!isThumbLoaded && !isThumbError) {
+                                        val shimmerBrush = ShimmerBrush(targetValue = 900f)
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .background(palette.cardBg)
+                                                .background(shimmerBrush),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            AppLottieLoadingAnimation(modifier = Modifier.size(28.dp))
+                                        }
                                     }
-                            ) {
-                                AsyncImage(
-                                    model = thumbRequest,
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
 
-                                if (item.isMultiMedia) {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.ic_instagram_carousel),
-                                        contentDescription = "Multiple Items",
-                                        tint = Color.White,
-                                        modifier = Modifier
-                                            .align(Alignment.TopEnd)
-                                            .padding(8.dp)
-                                            .size(20.dp)
+                                    AsyncImage(
+                                        model = thumbRequest,
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Crop,
+                                        onSuccess = { isThumbLoaded = true },
+                                        onError = {
+                                            isThumbLoaded = true
+                                            isThumbError = true
+                                        },
+                                        modifier = Modifier.fillMaxSize()
                                     )
-                                } else if (targetAttachment.kind == "video") {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.ic_player_play),
-                                        contentDescription = "Video",
-                                        tint = Color.White,
-                                        modifier = Modifier
-                                            .align(Alignment.TopEnd)
-                                            .padding(8.dp)
-                                            .size(18.dp)
-                                    )
+
+                                    if (item.isMultiMedia) {
+                                        Icon(
+                                            painter = painterResource(id = R.drawable.ic_instagram_carousel),
+                                            contentDescription = "Multiple Items",
+                                            tint = Color.White,
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .padding(8.dp)
+                                                .size(20.dp)
+                                        )
+                                    } else if (targetAttachment.kind == "video") {
+                                        Icon(
+                                            painter = painterResource(id = R.drawable.ic_player_play),
+                                            contentDescription = "Video",
+                                            tint = Color.White,
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .padding(8.dp)
+                                                .size(18.dp)
+                                        )
+                                    }
                                 }
                             }
-                        }
 
-                        if (isLoadingMore) {
-                            item {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(12.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    CircularProgressIndicator(
-                                        color = accent,
-                                        modifier = Modifier.size(24.dp)
-                                    )
+                            if (isLoadingMore) {
+                                item {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        AppLottieLoadingAnimation(modifier = Modifier.size(36.dp))
+                                    }
                                 }
                             }
                         }
@@ -655,5 +728,4 @@ fun CreatorDetailsScreen(
             }
         }
     }
-}
 }

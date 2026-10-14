@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.AppDatabase
@@ -62,6 +63,7 @@ sealed class ScreenState {
     object StashDb : ScreenState()
     object Onlyhaven : ScreenState()
     data class OnlyhavenCreatorDetails(val creator: com.example.network.OnlyhavenCreator) : ScreenState()
+    object OnlyhavenSavedCreators : ScreenState()
     object Settings : ScreenState()
 }
 
@@ -105,10 +107,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         seedInitialDataIfEmpty()
     }
 
+    // Saved Onlyhaven Creators
+    private val _savedOnlyhavenCreators = MutableStateFlow<List<OnlyhavenCreator>>(emptyList())
+    val savedOnlyhavenCreators: StateFlow<List<OnlyhavenCreator>> = _savedOnlyhavenCreators.asStateFlow()
+
+    private val _savedCreatorKeys = MutableStateFlow<Set<String>>(emptySet())
+    val savedCreatorKeys: StateFlow<Set<String>> = _savedCreatorKeys.asStateFlow()
+
     init {
         val db = AppDatabase.getInstance(application)
         repository = VaultRepository(db)
         seedInitialDataIfEmpty()
+        loadSavedOnlyhavenCreators()
     }
 
     private fun seedInitialDataIfEmpty() {
@@ -1868,6 +1878,87 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _isOnlyhavenLoadingMore.value = false
             }
         }
+    }
+
+    // Saved Onlyhaven Creators
+
+    private fun loadSavedOnlyhavenCreators() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val prefs = getApplication<Application>().getSharedPreferences("onlyhaven_saved_creators_prefs", Context.MODE_PRIVATE)
+                val jsonStr = prefs.getString("saved_creators_json", null)
+                if (!jsonStr.isNullOrBlank()) {
+                    val jsonArray = JSONArray(jsonStr)
+                    val list = mutableListOf<OnlyhavenCreator>()
+                    for (i in 0 until jsonArray.length()) {
+                        val obj = jsonArray.getJSONObject(i)
+                        list.add(
+                            OnlyhavenCreator(
+                                id = obj.optString("id"),
+                                name = obj.optString("name"),
+                                displayName = obj.optString("displayName"),
+                                service = obj.optString("service"),
+                                profileUrl = obj.optString("profileUrl"),
+                                avatarUrl = obj.optString("avatarUrl"),
+                                headerUrl = obj.optString("headerUrl"),
+                                postCount = obj.optInt("postCount", 0),
+                                videoCount = obj.optInt("videoCount", 0),
+                                imageCount = obj.optInt("imageCount", 0)
+                            )
+                        )
+                    }
+                    _savedOnlyhavenCreators.value = list
+                    _savedCreatorKeys.value = list.map { "${it.service}_${it.id}" }.toSet()
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("MainViewModel", "Error loading saved creators", e)
+            }
+        }
+    }
+
+    private fun persistSavedOnlyhavenCreators(list: List<OnlyhavenCreator>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val prefs = getApplication<Application>().getSharedPreferences("onlyhaven_saved_creators_prefs", Context.MODE_PRIVATE)
+                val jsonArray = JSONArray()
+                for (c in list) {
+                    val obj = JSONObject()
+                    obj.put("id", c.id)
+                    obj.put("name", c.name)
+                    obj.put("displayName", c.displayName)
+                    obj.put("service", c.service)
+                    obj.put("profileUrl", c.profileUrl)
+                    obj.put("avatarUrl", c.avatarUrl)
+                    obj.put("headerUrl", c.headerUrl)
+                    obj.put("postCount", c.postCount)
+                    obj.put("videoCount", c.videoCount)
+                    obj.put("imageCount", c.imageCount)
+                    jsonArray.put(obj)
+                }
+                prefs.edit().putString("saved_creators_json", jsonArray.toString()).apply()
+            } catch (e: Exception) {
+                android.util.Log.e("MainViewModel", "Error saving creators", e)
+            }
+        }
+    }
+
+    fun toggleSaveOnlyhavenCreator(creator: OnlyhavenCreator) {
+        val key = "${creator.service}_${creator.id}"
+        val current = _savedOnlyhavenCreators.value
+        val exists = current.any { "${it.service}_${it.id}" == key || (it.id == creator.id && it.service == creator.service) }
+        val updated = if (exists) {
+            current.filterNot { "${it.service}_${it.id}" == key || (it.id == creator.id && it.service == creator.service) }
+        } else {
+            listOf(creator) + current
+        }
+        _savedOnlyhavenCreators.value = updated
+        _savedCreatorKeys.value = updated.map { "${it.service}_${it.id}" }.toSet()
+        persistSavedOnlyhavenCreators(updated)
+    }
+
+    fun isCreatorSaved(creator: OnlyhavenCreator): Boolean {
+        val key = "${creator.service}_${creator.id}"
+        return _savedCreatorKeys.value.contains(key) || _savedOnlyhavenCreators.value.any { it.id == creator.id && it.service == creator.service }
     }
 }
 
